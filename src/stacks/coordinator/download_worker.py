@@ -12,20 +12,38 @@ import json
 import logging
 import signal
 import sys
+import threading
 from multiprocessing import Event
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 from urllib.parse import urlparse
 
-from stacks.config.config import Config
-from stacks.constants import DOWNLOAD_PATH, PROJECT_ROOT
+from stacks.constants import DOWNLOAD_PATH, PROJECT_ROOT, WORKER_HEARTBEAT_INTERVAL
 from stacks.coordinator.queue_ops import QueueOperations
 from stacks.downloader.sources import filter_mirrors_for_policy
+
+if TYPE_CHECKING:
+    from stacks.config.config import Config
 
 logger = logging.getLogger(__name__)
 
 
-def create_downloader(config: Config, progress_callback=None, status_callback=None):
+def _heartbeat_loop(
+    queue_ops: QueueOperations,
+    worker_id: str,
+    stop_event: threading.Event,
+    interval: float = WORKER_HEARTBEAT_INTERVAL,
+) -> None:
+    """Keep worker liveness independent from blocking download operations."""
+    while not stop_event.is_set():
+        try:
+            queue_ops.heartbeat(worker_id, 'download')
+        except Exception:
+            pass
+        stop_event.wait(interval)
+
+
+def create_downloader(config: "Config", progress_callback=None, status_callback=None):
     """
     Create an AnnaDownloader instance with the given config.
 
@@ -50,7 +68,7 @@ def create_downloader(config: Config, progress_callback=None, status_callback=No
     # Get FlareSolverr config
     flaresolverr_enabled = config.get('flaresolverr', 'enabled', default=False)
     flaresolverr_url = config.get('flaresolverr', 'url', default='http://localhost:8191')
-    flaresolverr_timeout = config.get('flaresolverr', 'timeout', default=60)
+    flaresolverr_timeout = config.get('flaresolverr', 'timeout', default=120)
     flaresolverr_timeout_ms = flaresolverr_timeout * 1000
 
     # Get file naming config
@@ -139,10 +157,24 @@ def download_worker_process(
     signal.signal(signal.SIGINT, signal_handler)
 
     # Initialize
+    from stacks.config.config import Config
+
     queue_ops = QueueOperations()
     config = Config(config_path)
     downloader = None
     cancel_flag = None  # None, 'cancel_requeue', or 'cancel_remove'
+
+    # Network calls such as a FlareSolverr solve can block without invoking a
+    # progress callback. Keep liveness on its own thread so the coordinator
+    # does not mistake a healthy worker for a dead one and requeue its job.
+    heartbeat_stop_event = threading.Event()
+    heartbeat_thread = threading.Thread(
+        target=_heartbeat_loop,
+        args=(queue_ops, worker_id, heartbeat_stop_event),
+        name=f'{worker_id}-heartbeat',
+        daemon=True,
+    )
+    heartbeat_thread.start()
 
     # Track last heartbeat / command-check / progress-write times (mutable for closure)
     import time as _time
@@ -404,6 +436,8 @@ def download_worker_process(
 
     # Cleanup
     worker_logger.info(f"Download worker {worker_id} stopping")
+    heartbeat_stop_event.set()
+    heartbeat_thread.join()
     queue_ops.remove_worker_heartbeat(worker_id)
 
     if downloader:

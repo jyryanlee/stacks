@@ -3,6 +3,7 @@ from urllib.parse import urlparse, urljoin
 from bs4 import BeautifulSoup
 from stacks.downloader.sites.zlib import parse_zlib_download_link, is_zlib_domain
 from stacks.constants import LEGAL_FILES, ANNAS_ARCHIVE_DOMAINS
+from stacks.downloader.protection import response_looks_like_protection
 from stacks.utils.domainutils import get_working_domain, try_domains_until_success
 
 def parse_download_link_from_html(d, html_content, md5, mirror_url=None):
@@ -128,9 +129,26 @@ def _get_download_links_single_domain(d, md5, domain):
 
     try:
         response = d.session.get(url, timeout=30)
-        response.raise_for_status()
+        if response_looks_like_protection(response):
+            if not d.flaresolverr_url:
+                raise Exception(f"Blocked by remote protection on {domain}")
 
-        soup = BeautifulSoup(response.text, 'html.parser')
+            success, _, html_content = d.solve_with_flaresolverr(url)
+            if not success:
+                raise Exception(f"FlareSolverr failed for {domain}")
+            if html_content:
+                page_html = html_content
+            else:
+                response = d.session.get(url, timeout=30)
+                if response_looks_like_protection(response):
+                    raise Exception(f"Still blocked by remote protection on {domain}")
+                response.raise_for_status()
+                page_html = response.text
+        else:
+            response.raise_for_status()
+            page_html = response.text
+
+        soup = BeautifulSoup(page_html, 'html.parser')
 
         # Helper function to extract filename from Filepath metadata
         def extract_from_filepath():

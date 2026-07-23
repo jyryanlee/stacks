@@ -48,10 +48,16 @@ services:
   # Optional, but recommended, bypasses Cloudflare and DDoS-Guard to allow slow download
   # to go more smoothly
   flaresolverr:
-    image: ghcr.io/flaresolverr/flaresolverr:latest
+    build:
+      context: ./docker/flaresolverr
+      args:
+        FLARESOLVERR_IMAGE: ghcr.io/flaresolverr/flaresolverr:v3.5.0@sha256:139dfee1c6f89249c8d665d1333a42e8ec74ec0a86bc6bb1c8461e10d3a66a47
+    image: stacks-flaresolverr:v3.5.0-ddos-guard-1
     container_name: flaresolverr
     ports:
-      - '8191:8191'
+      # Stacks reaches this service over the Compose network. Keep the API off
+      # the LAN because solver requests may contain target-proxy credentials.
+      - '127.0.0.1:8191:8191'
     environment:
-      - LOG_LEVEL=debug
+      - LOG_LEVEL=info
     restart: unless-stopped

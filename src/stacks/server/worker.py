@@ -74,7 +74,7 @@ class DownloadWorker:
         # Get FlareSolverr config
         flaresolverr_enabled = self.config.get('flaresolverr', 'enabled', default=False)
         flaresolverr_url = self.config.get('flaresolverr', 'url', default='http://localhost:8191')
-        flaresolverr_timeout = self.config.get('flaresolverr', 'timeout', default=60)
+        flaresolverr_timeout = self.config.get('flaresolverr', 'timeout', default=120)
         
         # Convert timeout to milliseconds (downloader expects milliseconds)
         flaresolverr_timeout_ms = flaresolverr_timeout * 1000

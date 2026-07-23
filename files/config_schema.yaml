@@ -83,7 +83,7 @@ flaresolverr:
     max_length: 256
   timeout:
     types: [INTEGER]
-    default: 60
+    default: 120
     min: 10
     max: 600
 

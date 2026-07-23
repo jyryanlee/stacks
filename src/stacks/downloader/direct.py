@@ -6,6 +6,8 @@ import hashlib
 from pathlib import Path
 from urllib.parse import urlparse, unquote
 
+from stacks.downloader.protection import streamed_response_looks_like_protection
+
 
 GENERIC_URL_FILENAMES = {
     'download',
@@ -15,6 +17,49 @@ GENERIC_URL_FILENAMES = {
     'get',
     'slow_download',
 }
+
+
+def _get_download_response(d, download_url, headers=None):
+    """Fetch a file response, solving and retrying one protection challenge."""
+    response = d.session.get(
+        download_url,
+        headers=headers or {},
+        stream=True,
+        timeout=30,
+    )
+    if streamed_response_looks_like_protection(response):
+        challenge_url = response.url or download_url
+        status_code = response.status_code
+        response.close()
+        if not getattr(d, 'flaresolverr_url', None):
+            raise RuntimeError(f"Blocked by remote protection (HTTP {status_code})")
+
+        solved, _, _ = d.solve_with_flaresolverr(challenge_url)
+        if not solved:
+            raise RuntimeError("FlareSolverr failed to solve the download challenge")
+
+        response = d.session.get(
+            download_url,
+            headers=headers or {},
+            stream=True,
+            timeout=30,
+        )
+        if streamed_response_looks_like_protection(response):
+            status_code = response.status_code
+            response.close()
+            raise RuntimeError(f"Still blocked by remote protection (HTTP {status_code})")
+
+    # Let the caller recover from a stale/invalid Range request by deleting
+    # the partial file and retrying from byte zero.
+    if (headers or {}).get('Range') and response.status_code not in (200, 206):
+        return response
+
+    try:
+        response.raise_for_status()
+    except Exception:
+        response.close()
+        raise
+    return response
 
 
 def _sanitize_filename(filename):
@@ -134,7 +179,7 @@ def download_direct(d, download_url, title=None, total_size=None, supports_resum
                     headers['Range'] = f'bytes={downloaded}-'
                     d.logger.info(f"Resuming from byte {downloaded}")
 
-                response = d.session.get(download_url, headers=headers, stream=True, timeout=30)
+                response = _get_download_response(d, download_url, headers=headers)
 
                 response_filename = _extract_response_filename(response)
                 final_url_filename = _extract_url_filename(response.url)
@@ -152,13 +197,14 @@ def download_direct(d, download_url, title=None, total_size=None, supports_resum
                     d.logger.info(f"Found partial file: {downloaded}/{total_size if total_size else '?'} bytes")
                     response.close()
                     headers['Range'] = f'bytes={downloaded}-'
-                    response = d.session.get(download_url, headers=headers, stream=True, timeout=30)
+                    response = _get_download_response(d, download_url, headers=headers)
 
                 if downloaded > 0 and response.status_code not in [200, 206]:
                     d.logger.warning(f"Resume not supported (status {response.status_code}), starting fresh")
                     downloaded = 0
+                    response.close()
                     temp_path.unlink(missing_ok=True)
-                    response = d.session.get(download_url, stream=True, timeout=30)
+                    response = _get_download_response(d, download_url)
 
                 # Get total size
                 if total_size is None:

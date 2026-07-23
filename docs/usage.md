@@ -33,16 +33,21 @@ If you used the provided docker-compose.yml, FlareSolverr is already included an
 1. Deploy FlareSolverr (see docker-compose.yml for reference)
 2. In Stacks Settings tab:
    - Enter FlareSolverr URL (e.g., `http://flaresolverr:8191`)
-   - Set timeout (60 seconds recommended)
+   - Set timeout (120 seconds recommended for DDoS-Guard)
    - Click "Test FlareSolverr" to verify connection
    - Enable FlareSolverr and save settings
 
 ### How it works
 
-- Stacks automatically uses FlareSolverr when it encounters 403 errors
-- Cookies are cached per-domain for 24 hours to reduce FlareSolverr calls
+- Stacks detects protected HTML on HTTP 200 responses as well as 403, 429, and 503 responses
+- Cookies retain their browser domain, path, security attributes, expiry, and matching User-Agent
 - Pre-warming: Cookies are refreshed automatically on startup
+- A background worker heartbeat remains active during long browser solves
 - No manual intervention needed once configured
+
+The solver browser and Stacks must use the same outbound proxy/IP. Configure
+the proxy in Stacks rather than through ambient `HTTP_PROXY` environment
+variables so it can be passed explicitly to both request paths.
 
 ## Getting a Fast Download Key
 

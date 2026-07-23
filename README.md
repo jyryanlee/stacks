@@ -49,6 +49,12 @@ You can deploy it with either **Docker Compose** or the **Docker CLI**.
 - _(Recommended)_ FlareSolverr for solving Cloudflare/DDoS-guard
 - _(Optional)_ Anna's Archive membership for fast downloads
 
+> **Current DDoS-Guard support:** the reviewed FlareSolverr overlay lives in
+> `docker/flaresolverr`. Clone this repository and use its included
+> `docker-compose.yml` (or build that directory manually) when you need the
+> DDoS-Guard fix. A standalone upstream FlareSolverr image does not include
+> the overlay.
+
 1. Create a file named `docker-compose.yaml` and add the following:
 
    ```yaml
@@ -100,10 +106,10 @@ You can deploy it with either **Docker Compose** or the **Docker CLI**.
       # protection on mirror sites. Required if you encounter 403 errors when
       # downloading. Not needed for fast downloads.
       flaresolverr:
-          image: ghcr.io/flaresolverr/flaresolverr:latest
+          image: ghcr.io/flaresolverr/flaresolverr:v3.5.0
           container_name: flaresolverr
           ports:
-            - "8191:8191"
+            - "127.0.0.1:8191:8191"
           environment:
             - LOG_LEVEL=info
           restart: unless-stopped
@@ -125,7 +131,7 @@ You can deploy it with either **Docker Compose** or the **Docker CLI**.
 
 If you are running Stacks from a checked-out copy of this repository, these helper scripts wrap the included `docker-compose.yml`.
 
-Use `build-and-launch.sh` when you want to build from local source and run Stacks locally. It stops/removes existing Stacks containers and images after checking the project fingerprint, rebuilds the image, starts all Compose services, and attaches logs:
+Use `build-and-launch.sh` when you want to build from local source and run Stacks locally. It stops/removes existing Stacks containers and images after checking the project fingerprint, rebuilds Stacks and the pinned DDoS-Guard FlareSolverr overlay, starts all Compose services, and attaches logs:
 
 ```bash
 ./build-and-launch.sh
@@ -167,13 +173,17 @@ If you prefer running Stacks without Docker Compose, you can use the Docker CLI 
    ```
 3. Set up FlareSolverr
    ```bash
+   docker build \
+     -t stacks-flaresolverr:v3.5.0-ddos-guard-1 \
+     ./docker/flaresolverr
+
    docker run -d \
      --name flaresolverr \
      --network stacks \
-     -p 8191:8191 \
+     -p 127.0.0.1:8191:8191 \
      -e LOG_LEVEL=info \
      --restart unless-stopped \
-     ghcr.io/flaresolverr/flaresolverr:latest
+     stacks-flaresolverr:v3.5.0-ddos-guard-1
    ```
 4. Set up Stacks
    ```bash

@@ -525,7 +525,7 @@ function loadSettings() {
       // FlareSolverr
       document.getElementById("setting-flaresolverr-enabled").checked = !!config.flaresolverr?.enabled;
       document.getElementById("setting-flaresolverr-url").value = config.flaresolverr?.url || "http://localhost:8191";
-      document.getElementById("setting-flaresolverr-timeout").value = config.flaresolverr?.timeout || 60;
+      document.getElementById("setting-flaresolverr-timeout").value = config.flaresolverr?.timeout || 120;
 
       // Proxy
       document.getElementById("setting-proxy-enabled").checked = !!config.proxy?.enabled;
@@ -565,7 +565,7 @@ function saveSettings() {
     flaresolverr: {
       enabled: document.getElementById("setting-flaresolverr-enabled").checked,
       url: document.getElementById("setting-flaresolverr-url").value || "http://localhost:8191",
-      timeout: parseInt(document.getElementById("setting-flaresolverr-timeout").value) || 60,
+      timeout: parseInt(document.getElementById("setting-flaresolverr-timeout").value) || 120,
     },
     proxy: {
       enabled: document.getElementById("setting-proxy-enabled").checked,

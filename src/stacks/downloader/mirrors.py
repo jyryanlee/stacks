@@ -1,10 +1,13 @@
+from stacks.downloader.protection import response_looks_like_protection
+
+
 def download_from_mirror(d, mirror_url, mirror_type, md5, title=None, resume_attempts=3, subfolder=None):
     """
     Download from any mirror with stale cookie handling.
 
     Logic:
     - slow_download: Use pre-warmed cookies with direct HTTP requests
-    - external_mirror: Try direct, use FlareSolverr on 403 (with cookie refresh)
+    - external_mirror: Try direct, use FlareSolverr on protection responses
 
     Args:
         subfolder: Subfolder path to save file to (optional)
@@ -23,8 +26,8 @@ def download_from_mirror(d, mirror_url, mirror_type, md5, title=None, resume_att
                 # Try to fetch the slow_download page with cookies
                 response = d.session.get(mirror_url, timeout=30)
 
-                # If we get a challenge page (403/503), solve it with FlareSolverr
-                if response.status_code in [403, 503]:
+                # DDoS-Guard can return either an error status or a branded HTTP-200 page.
+                if response_looks_like_protection(response):
                     if not d.flaresolverr_url:
                         d.logger.warning(f"Got {response.status_code} but no FlareSolverr configured")
                         return None
@@ -40,6 +43,14 @@ def download_from_mirror(d, mirror_url, mirror_type, md5, title=None, resume_att
                     if not success:
                         d.logger.error("FlareSolverr failed")
                         return None
+
+                    if not html_content:
+                        response = d.session.get(mirror_url, timeout=30)
+                        if response_looks_like_protection(response):
+                            d.logger.error("Still protected after FlareSolverr solve")
+                            return None
+                        response.raise_for_status()
+                        html_content = response.text
 
                     if hasattr(d, 'status_callback'):
                         d.status_callback("Extracting download link...")
@@ -84,10 +95,10 @@ def download_from_mirror(d, mirror_url, mirror_type, md5, title=None, resume_att
             try:
                 response = d.session.get(mirror_url, timeout=30)
 
-                # If 403, refresh cookies and retry
-                if response.status_code == 403:
+                # Refresh cookies and retry any recognised protection response.
+                if response_looks_like_protection(response):
                     if d.flaresolverr_url:
-                        d.logger.warning("Got 403 - trying to refresh cookies")
+                        d.logger.warning(f"Got protection response ({response.status_code}) - trying to refresh cookies")
 
                         # Try to pre-warm new cookies
                         if d.prewarm_cookies():
@@ -95,8 +106,8 @@ def download_from_mirror(d, mirror_url, mirror_type, md5, title=None, resume_att
                             # Retry once with fresh cookies
                             response = d.session.get(mirror_url, timeout=30)
 
-                            if response.status_code == 403:
-                                d.logger.warning("Still got 403 after cookie refresh, using FlareSolverr for full solve")
+                            if response_looks_like_protection(response):
+                                d.logger.warning("Still protected after cookie refresh, using FlareSolverr for full solve")
                             else:
                                 # Success with fresh cookies, continue to parse
                                 response.raise_for_status()
@@ -114,12 +125,19 @@ def download_from_mirror(d, mirror_url, mirror_type, md5, title=None, resume_att
 
                                 return d.download_direct(download_link, title=title, resume_attempts=resume_attempts, md5=md5, subfolder=subfolder)
 
-                        # If cookie refresh failed or still got 403, use FlareSolverr
+                        # If cookie refresh failed or protection remains, use FlareSolverr.
                         if hasattr(d, 'status_callback'):
                             d.status_callback("Solving CAPTCHA with FlareSolverr...")
                         success, cookies, html_content = d.solve_with_flaresolverr(mirror_url)
 
                         if success:
+                            if not html_content:
+                                response = d.session.get(mirror_url, timeout=30)
+                                if response_looks_like_protection(response):
+                                    d.logger.error("Still protected after FlareSolverr solve")
+                                    return None
+                                response.raise_for_status()
+                                html_content = response.text
                             if hasattr(d, 'status_callback'):
                                 d.status_callback("Extracting download link...")
                             download_link = d.parse_download_link_from_html(html_content, md5, mirror_url)
@@ -130,7 +148,7 @@ def download_from_mirror(d, mirror_url, mirror_type, md5, title=None, resume_att
                                 return d.download_direct(download_link, title=title, resume_attempts=resume_attempts, md5=md5, subfolder=subfolder)
                         return None
                     else:
-                        d.logger.warning("Got 403 but FlareSolverr not configured")
+                        d.logger.warning(f"Got protection response ({response.status_code}) but FlareSolverr not configured")
                         return None
 
                 response.raise_for_status()

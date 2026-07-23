@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+
+### Bugfixes
+
+- Added a pinned FlareSolverr v3.5.0 overlay for current DDoS-Guard browser checks.
+- Detect unresolved protection pages on HTTP 200, 403, 429, and 503 responses.
+- Preserve solved cookie scope, expiry, security metadata, and matching User-Agent.
+- Keep download-worker heartbeats active during long browser solves.
+- Keep explicit target proxies and FlareSolverr browser egress aligned.
+
 ## [1.3.0]
 
 ### Features

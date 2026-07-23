@@ -10,11 +10,12 @@ from stacks.downloader.flaresolver import solve_with_flaresolverr
 from stacks.downloader.html import get_download_links, parse_download_link_from_html
 from stacks.downloader.mirrors import download_from_mirror
 from stacks.downloader.orchestrator import orchestrate_download
+from stacks.downloader.proxy import add_proxy_credentials, isolate_session_from_environment_proxies
 from stacks.downloader.utils import get_unique_filename
 
 class AnnaDownloader:
     def __init__(self, output_dir="./downloads", incomplete_dir=None, progress_callback=None,
-                 fast_download_config=None, flaresolverr_url=None, flaresolverr_timeout=60000,
+                 fast_download_config=None, flaresolverr_url=None, flaresolverr_timeout=120000,
                  status_callback=None, prefer_title_naming=False, include_hash="none",
                  proxy_config=None, allow_external_mirrors=False):
         self.output_dir = Path(output_dir)
@@ -27,9 +28,18 @@ class AnnaDownloader:
         self.incomplete_dir.mkdir(parents=True, exist_ok=True)
 
         self.session = requests.Session()
+        # Use only the application's explicit proxy configuration so the
+        # browser solve and follow-up request cannot silently take different
+        # environment-proxy routes.
+        isolate_session_from_environment_proxies(self.session)
         self.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
         })
+        # Keep calls to the local FlareSolverr API off the target site's proxy.
+        # The target proxy is passed explicitly in the FlareSolverr request body.
+        self.flaresolverr_control_session = isolate_session_from_environment_proxies(
+            requests.Session()
+        )
 
         # Proxy configuration
         self.proxy_config = proxy_config or {}
@@ -37,14 +47,11 @@ class AnnaDownloader:
             proxy_url = self.proxy_config['url']
             # Add authentication if provided
             if self.proxy_config.get('username') and self.proxy_config.get('password'):
-                # Insert credentials into proxy URL
-                from urllib.parse import urlparse, urlunparse
-                parsed = urlparse(proxy_url)
-                proxy_url = urlunparse((
-                    parsed.scheme,
-                    f"{self.proxy_config['username']}:{self.proxy_config['password']}@{parsed.netloc}",
-                    parsed.path, parsed.params, parsed.query, parsed.fragment
-                ))
+                proxy_url = add_proxy_credentials(
+                    proxy_url,
+                    self.proxy_config['username'],
+                    self.proxy_config['password'],
+                )
             self.session.proxies = {
                 'http': proxy_url,
                 'https': proxy_url
@@ -91,7 +98,8 @@ class AnnaDownloader:
             self.logger.info(f"FlareSolverr not configured - using {source_mode}")
 
         if self.proxy_config.get('enabled') and self.proxy_config.get('url'):
-            self.logger.info(f"Proxy enabled: {self.proxy_config['url']}")
+            # Proxy URLs may contain inline credentials, so never log them.
+            self.logger.info("Proxy enabled")
 
         # Always try to load cached cookies (useful for slow_download even without FlareSolverr)
         self.load_cached_cookies()
@@ -100,8 +108,14 @@ class AnnaDownloader:
     def load_cached_cookies(self, domain=None):
         return _load_cached_cookies(self, domain)
 
-    def save_cookies_to_cache(self, cookies_dict, domain=None, user_agent=None):
-        return _save_cookies_to_cache(self, cookies_dict, domain, user_agent=user_agent)
+    def save_cookies_to_cache(self, cookies_dict, domain=None, user_agent=None, replace=False):
+        return _save_cookies_to_cache(
+            self,
+            cookies_dict,
+            domain,
+            user_agent=user_agent,
+            replace=replace,
+        )
 
     def prewarm_cookies(self):
         return _prewarm_cookies(self)
@@ -159,5 +173,7 @@ class AnnaDownloader:
             if hasattr(self, 'session') and self.session:
                 self.logger.info("Closing HTTP session...")
                 self.session.close()
+            if hasattr(self, 'flaresolverr_control_session') and self.flaresolverr_control_session:
+                self.flaresolverr_control_session.close()
         except Exception as e:
             self.logger.error(f"Error during cleanup: {e}")

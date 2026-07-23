@@ -9,6 +9,11 @@ from . import api_bp
 from stacks.constants import TIMESTAMP
 from stacks.downloader.cookies import _load_cached_cookies, _save_cookies_to_cache
 from stacks.downloader.flaresolver import solve_with_flaresolverr
+from stacks.downloader.protection import (
+    HTML_CONTENT_TYPES,
+    response_looks_like_protection,
+)
+from stacks.downloader.proxy import add_proxy_credentials, isolate_session_from_environment_proxies
 from stacks.security.auth import require_login
 from stacks.utils.domainutils import get_all_domains, get_working_domain, save_working_domain
 
@@ -44,8 +49,6 @@ PROXY_RESPONSE_HEADERS = (
     "Vary",
 )
 
-HTML_CONTENT_TYPES = ("text/html", "application/xhtml+xml")
-PROTECTION_MARKERS = ("ddos-guard", "just a moment", "cf-chl", "cf-browser-verification")
 PROXY_DOMAIN_PARAM = "__aa_domain"
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -57,8 +60,11 @@ USER_AGENT = (
 class _ProxySessionContext:
     def __init__(self, config):
         self.logger = logger
-        self.session = requests.Session()
+        self.session = isolate_session_from_environment_proxies(requests.Session())
         self.session.headers.update({"User-Agent": USER_AGENT})
+        self.flaresolverr_control_session = isolate_session_from_environment_proxies(
+            requests.Session()
+        )
 
         proxy_enabled = config.get("proxy", "enabled", default=False)
         proxy_url = config.get("proxy", "url", default=None)
@@ -66,8 +72,7 @@ class _ProxySessionContext:
             username = config.get("proxy", "username", default=None)
             password = config.get("proxy", "password", default=None)
             if username and password:
-                parsed = urlparse(proxy_url)
-                proxy_url = parsed._replace(netloc=f"{username}:{password}@{parsed.netloc}").geturl()
+                proxy_url = add_proxy_credentials(proxy_url, username, password)
             self.session.proxies = {"http": proxy_url, "https": proxy_url}
 
         flaresolverr_enabled = config.get("flaresolverr", "enabled", default=False)
@@ -76,19 +81,26 @@ class _ProxySessionContext:
             flaresolverr_url = f"http://{flaresolverr_url}"
 
         self.flaresolverr_url = flaresolverr_url if flaresolverr_enabled else None
-        self.flaresolverr_timeout = config.get("flaresolverr", "timeout", default=60) * 1000
+        self.flaresolverr_timeout = config.get("flaresolverr", "timeout", default=120) * 1000
 
     def load_cached_cookies(self, domain=None):
         return _load_cached_cookies(self, domain)
 
-    def save_cookies_to_cache(self, cookies_dict, domain=None, user_agent=None):
-        return _save_cookies_to_cache(self, cookies_dict, domain, user_agent=user_agent)
+    def save_cookies_to_cache(self, cookies_dict, domain=None, user_agent=None, replace=False):
+        return _save_cookies_to_cache(
+            self,
+            cookies_dict,
+            domain,
+            user_agent=user_agent,
+            replace=replace,
+        )
 
     def solve_with_flaresolverr(self, url):
         return solve_with_flaresolverr(self, url)
 
     def close(self):
         self.session.close()
+        self.flaresolverr_control_session.close()
 
 
 def _build_target_url(domain, proxy_path):
@@ -100,8 +112,26 @@ def _build_target_url(domain, proxy_path):
     return target_url
 
 
-def _extract_cookie_values(response):
-    return {cookie.name: cookie.value for cookie in response.cookies}
+def _extract_cookie_records(response):
+    records = []
+    for cookie in response.cookies:
+        record = {
+            "name": cookie.name,
+            "value": cookie.value,
+            "domain": cookie.domain or urlparse(response.url).hostname,
+            "path": cookie.path or "/",
+            "secure": bool(cookie.secure),
+        }
+        if cookie.expires is not None:
+            record["expires"] = cookie.expires
+        http_only = cookie._rest.get("HttpOnly")
+        if isinstance(http_only, bool):
+            record["httpOnly"] = http_only
+        same_site = cookie._rest.get("SameSite")
+        if same_site in ("Strict", "Lax", "None"):
+            record["sameSite"] = same_site
+        records.append(record)
+    return records
 
 
 def _build_solved_html_response(target_url, html_content):
@@ -115,13 +145,7 @@ def _build_solved_html_response(target_url, html_content):
 
 
 def _looks_like_protection(response):
-    content_type = response.headers.get("Content-Type", "").lower()
-    if response.status_code in (403, 429, 503):
-        return True
-    if not any(kind in content_type for kind in HTML_CONTENT_TYPES):
-        return False
-    text = response.text[:4000].lower()
-    return any(marker in text for marker in PROTECTION_MARKERS)
+    return response_looks_like_protection(response)
 
 
 def _build_forward_headers():
@@ -174,7 +198,7 @@ def _fetch_remote_response(proxy_path, domain):
         if response.status_code >= 500:
             raise Exception(f"Remote server error {response.status_code} on {domain}")
 
-        cookies = _extract_cookie_values(response)
+        cookies = _extract_cookie_records(response)
         if cookies:
             proxy_context.save_cookies_to_cache(cookies, domain=response.url)
 

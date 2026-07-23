@@ -93,7 +93,7 @@ def scraper_process(config_path: Path, stop_event: Event) -> None:
                 # Get FlareSolverr config (needed for some mirrors)
                 flaresolverr_enabled = config.get('flaresolverr', 'enabled', default=False)
                 flaresolverr_url = config.get('flaresolverr', 'url', default='http://localhost:8191')
-                flaresolverr_timeout = config.get('flaresolverr', 'timeout', default=60)
+                flaresolverr_timeout = config.get('flaresolverr', 'timeout', default=120)
                 flaresolverr_timeout_ms = flaresolverr_timeout * 1000
 
                 # Get incomplete folder path
