@@ -115,6 +115,41 @@ def _extract_domain(url: str) -> str:
         return ''
 
 
+def _mirror_domain(mirror: dict) -> str:
+    """Return the coordination domain for a mirror record."""
+    return _extract_domain(mirror.get('url', '')) or mirror.get('domain', '')
+
+
+def _build_mirrors_to_try(assigned_mirror: Optional[dict], mirrors: list) -> list:
+    """Put the assigned URL first while preserving other distinct URLs."""
+    ordered = []
+    seen_urls = set()
+
+    for mirror in ([assigned_mirror] if assigned_mirror else []) + list(mirrors):
+        if not isinstance(mirror, dict):
+            continue
+        url = mirror.get('url', '')
+        if not url or url in seen_urls:
+            continue
+        seen_urls.add(url)
+        ordered.append(mirror)
+
+    return ordered
+
+
+def _uses_assigned_domain_claim(
+    domain: str,
+    assigned_claim_domain: str,
+    assigned_mirror_claimed: bool,
+) -> bool:
+    """Return whether this worker already owns the mirror's domain lock."""
+    return bool(
+        assigned_mirror_claimed
+        and assigned_claim_domain
+        and domain == assigned_claim_domain
+    )
+
+
 def download_worker_process(
     worker_id: str,
     config_path: Path,
@@ -262,12 +297,14 @@ def download_worker_process(
                 config.get('downloads', 'allow_external_mirrors', default=False)
             )
             assigned_mirror_claimed = assigned_mirror is not None
+            assigned_claim_domain = (
+                _mirror_domain(assigned_mirror) if assigned_mirror else ''
+            )
             if assigned_mirror and not filter_mirrors_for_policy(
                 [assigned_mirror],
                 config.get('downloads', 'allow_external_mirrors', default=False)
             ):
                 assigned_mirror = None
-                assigned_mirror_claimed = False
 
             worker_logger.info(f"Claimed job: {md5} ({len(all_mirrors)} mirrors available)")
 
@@ -315,23 +352,13 @@ def download_worker_process(
 
                 # If fast download didn't work, try mirrors
                 if not success and not stop_event.is_set():
-                    # Build list of mirrors to try (assigned first, then others)
-                    mirrors_to_try = []
-                    tried_domains = set()
-
-                    # Add assigned mirror first
-                    if assigned_mirror:
-                        mirrors_to_try.append(assigned_mirror)
-                        domain = _extract_domain(assigned_mirror.get('url', ''))
-                        if domain:
-                            tried_domains.add(domain)
-
-                    # Add remaining mirrors
-                    for mirror in all_mirrors:
-                        domain = _extract_domain(mirror.get('url', ''))
-                        if domain and domain not in tried_domains:
-                            mirrors_to_try.append(mirror)
-                            tried_domains.add(domain)
+                    # Distinct slow-download partner routes commonly share the
+                    # same Anna's Archive domain. Preserve each URL so a failed
+                    # partner can fall through to the next one.
+                    mirrors_to_try = _build_mirrors_to_try(
+                        assigned_mirror,
+                        all_mirrors,
+                    )
 
                     # Try each mirror
                     last_error = None
@@ -339,12 +366,23 @@ def download_worker_process(
                         if stop_event.is_set():
                             break
 
-                        domain = _extract_domain(mirror.get('url', '')) or mirror.get('domain', 'unknown')
-                        worker_logger.info(f"Trying mirror {i+1}/{len(mirrors_to_try)}: {domain}")
+                        domain = _mirror_domain(mirror) or 'unknown'
+                        mirror_name = mirror.get('text') or domain
+                        worker_logger.info(
+                            f"Trying mirror {i+1}/{len(mirrors_to_try)}: "
+                            f"{mirror_name} ({domain})"
+                        )
 
-                        # For mirrors after the first, we need to claim them
+                        # The assigned mirror's domain is already locked by this
+                        # worker. Reuse that lock for other partner URLs on the
+                        # same domain; claim only genuinely different domains.
                         secondary_mirror_claimed = False
-                        if i > 0 or not assigned_mirror_claimed:
+                        uses_assigned_claim = _uses_assigned_domain_claim(
+                            domain,
+                            assigned_claim_domain,
+                            assigned_mirror_claimed,
+                        )
+                        if not uses_assigned_claim:
                             secondary_mirror_claimed = queue_ops.claim_mirror(domain, worker_id)
                             if not secondary_mirror_claimed:
                                 worker_logger.info(f"Mirror {domain} is busy, skipping")
