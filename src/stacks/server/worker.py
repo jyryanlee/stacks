@@ -83,6 +83,11 @@ class DownloadWorker:
         prefer_title_naming = self.config.get('downloads', 'prefer_title_naming', default=False)
         include_hash = self.config.get('downloads', 'include_hash', default="none")
         download_read_timeout = self.config.get('downloads', 'read_timeout', default=300)
+        allow_external_mirrors = self.config.get(
+            'downloads',
+            'allow_external_mirrors',
+            default=False,
+        )
 
         # Get incomplete folder path from config
         incomplete_folder_path = self.config.get('downloads', 'incomplete_folder_path', default='/download/incomplete')
@@ -108,6 +113,7 @@ class DownloadWorker:
             prefer_title_naming=prefer_title_naming,
             include_hash=include_hash,
             proxy_config=proxy_config,
+            allow_external_mirrors=allow_external_mirrors,
             download_read_timeout=download_read_timeout
         )
         

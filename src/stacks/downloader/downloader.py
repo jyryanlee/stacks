@@ -91,7 +91,11 @@ class AnnaDownloader:
         self.include_hash = include_hash  # "none", "prefix", or "suffix"
         self.allow_external_mirrors = allow_external_mirrors
 
-        source_mode = "all download sources" if allow_external_mirrors else "Anna's Archive slow_download sources only"
+        source_mode = (
+            "Anna's Archive plus supported external fallbacks"
+            if allow_external_mirrors
+            else "Anna's Archive slow_download sources only"
+        )
 
         if flaresolverr_url:
             self.logger.info(f"FlareSolverr enabled: {flaresolverr_url}")
@@ -124,8 +128,28 @@ class AnnaDownloader:
     
     
     # Direct
-    def download_direct(self, download_url, title=None, total_size=None, supports_resume=True, resume_attempts=3, md5=None, subfolder=None):
-        return download_direct(self, download_url, title, total_size, supports_resume, resume_attempts, md5, subfolder)
+    def download_direct(
+        self,
+        download_url,
+        title=None,
+        total_size=None,
+        supports_resume=True,
+        resume_attempts=3,
+        md5=None,
+        subfolder=None,
+        request_headers=None,
+    ):
+        return download_direct(
+            self,
+            download_url,
+            title,
+            total_size,
+            supports_resume,
+            resume_attempts,
+            md5,
+            subfolder,
+            request_headers,
+        )
     
     
     # Download orchestrator

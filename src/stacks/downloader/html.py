@@ -1,6 +1,10 @@
 import re
 from urllib.parse import urlparse, urljoin
 from bs4 import BeautifulSoup
+from stacks.downloader.sites.libgen import (
+    is_libgen_domain,
+    parse_libgen_download_link,
+)
 from stacks.downloader.sites.zlib import parse_zlib_download_link, is_zlib_domain
 from stacks.constants import LEGAL_FILES, ANNAS_ARCHIVE_DOMAINS
 from stacks.downloader.protection import response_looks_like_protection
@@ -22,6 +26,17 @@ def parse_download_link_from_html(d, html_content, md5, mirror_url=None):
         """
         # Try site-specific scrapers first
         if mirror_url:
+            # LibGen pages contain many self/ad links with the MD5. Never fall
+            # through to the generic parser when the strict GET parser fails.
+            if is_libgen_domain(mirror_url):
+                d.logger.debug("Using LibGen-specific scraper")
+                return parse_libgen_download_link(
+                    d,
+                    html_content,
+                    mirror_url,
+                    expected_md5=md5,
+                )
+
             # Z-Library sites
             if is_zlib_domain(mirror_url):
                 d.logger.debug("Using Z-Library specific scraper")
@@ -323,7 +338,7 @@ def _get_download_links_single_domain(d, md5, domain):
                 links.append({
                     'url': href,
                     'domain': domain,
-                    'text': domain,
+                    'text': a.get_text(" ", strip=True) or domain,
                     'type': 'external_mirror'
                 })
                 d.logger.debug(f"Added external mirror: {domain}")

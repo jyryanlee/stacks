@@ -1,6 +1,23 @@
 import random
 
-from stacks.downloader.sources import filter_mirrors_for_policy
+from stacks.downloader.sources import (
+    filter_mirrors_for_policy,
+    is_slow_download_mirror,
+)
+
+
+def _shuffle_mirrors_for_attempt(links):
+    """Spread load without moving external fallbacks ahead of Anna routes."""
+    slow_downloads = [
+        link for link in links if is_slow_download_mirror(link)
+    ]
+    external_fallbacks = [
+        link for link in links if not is_slow_download_mirror(link)
+    ]
+    random.shuffle(slow_downloads)
+    # The policy filter orders strict external adapters by preference.
+    # Preserve that order as additional adapters are added.
+    return slow_downloads + external_fallbacks
 
 def _is_cancelled(d):
     """Check if download should be cancelled via progress callback"""
@@ -84,8 +101,9 @@ def orchestrate_download(d, input_string, prefer_mirror=None, resume_attempts=3,
         others = [link for link in links if prefer_mirror.lower() not in link['domain'].lower()]
         links = preferred + others
     else:
-        # Shuffle to spread load across mirrors (unless user has preference)
-        random.shuffle(links)
+        # Spread load across Anna partner routes, but keep the policy-defined
+        # external fallback order behind them.
+        links = _shuffle_mirrors_for_attempt(links)
 
     # Try each mirror
     for i, mirror_link in enumerate(links):

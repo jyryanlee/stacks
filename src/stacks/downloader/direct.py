@@ -15,6 +15,8 @@ GENERIC_URL_FILENAMES = {
     'download.cgi',
     'file',
     'get',
+    'get.php',
+    'main.php',
     'slow_download',
 }
 
@@ -167,7 +169,17 @@ def calculate_md5(filepath):
             hash_md5.update(chunk)
     return hash_md5.hexdigest()
 
-def download_direct(d, download_url, title=None, total_size=None, supports_resume=True, resume_attempts=3, md5=None, subfolder=None):
+def download_direct(
+    d,
+    download_url,
+    title=None,
+    total_size=None,
+    supports_resume=True,
+    resume_attempts=3,
+    md5=None,
+    subfolder=None,
+    request_headers=None,
+):
     """Download a file directly from a URL with resume support.
 
     Args:
@@ -179,6 +191,7 @@ def download_direct(d, download_url, title=None, total_size=None, supports_resum
         resume_attempts: Number of resume attempts
         md5: Expected MD5 hash for verification (optional)
         subfolder: Subfolder path to save file to (optional)
+        request_headers: Headers that must accompany every file request
     """
     try:
         url_filename = _extract_url_filename(download_url)
@@ -209,10 +222,11 @@ def download_direct(d, download_url, title=None, total_size=None, supports_resum
         downloaded = 0
 
         # Download with resume
+        base_headers = dict(request_headers or {})
         for attempt in range(resume_attempts):
             response = None
             try:
-                headers = {}
+                headers = dict(base_headers)
                 if downloaded > 0 and supports_resume:
                     headers['Range'] = f'bytes={downloaded}-'
                     d.logger.info(f"Resuming from byte {downloaded}")
@@ -254,7 +268,11 @@ def download_direct(d, download_url, title=None, total_size=None, supports_resum
                             downloaded = 0
                             response.close()
                             temp_path.unlink(missing_ok=True)
-                            response = _get_download_response(d, download_url)
+                            response = _get_download_response(
+                                d,
+                                download_url,
+                                headers=base_headers,
+                            )
                         else:
                             _, resumed_total_size = resume_range
                             if resumed_total_size is not None:

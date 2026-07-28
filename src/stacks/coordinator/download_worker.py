@@ -20,7 +20,10 @@ from urllib.parse import urlparse
 
 from stacks.constants import DOWNLOAD_PATH, PROJECT_ROOT, WORKER_HEARTBEAT_INTERVAL
 from stacks.coordinator.queue_ops import QueueOperations
-from stacks.downloader.sources import filter_mirrors_for_policy
+from stacks.downloader.sources import (
+    filter_mirrors_for_policy,
+    is_slow_download_mirror,
+)
 
 if TYPE_CHECKING:
     from stacks.config.config import Config
@@ -121,13 +124,30 @@ def _mirror_domain(mirror: dict) -> str:
 
 
 def _build_mirrors_to_try(assigned_mirror: Optional[dict], mirrors: list) -> list:
-    """Put the assigned URL first while preserving other distinct URLs."""
+    """Preserve distinct URLs and keep external assignments behind Anna routes."""
     ordered = []
     seen_urls = set()
 
-    for mirror in ([assigned_mirror] if assigned_mirror else []) + list(mirrors):
-        if not isinstance(mirror, dict):
-            continue
+    candidates = [
+        mirror for mirror in mirrors if isinstance(mirror, dict)
+    ]
+    if isinstance(assigned_mirror, dict):
+        if is_slow_download_mirror(assigned_mirror):
+            candidates.insert(0, assigned_mirror)
+        else:
+            slow_downloads = [
+                mirror
+                for mirror in candidates
+                if is_slow_download_mirror(mirror)
+            ]
+            external_fallbacks = [
+                mirror
+                for mirror in candidates
+                if not is_slow_download_mirror(mirror)
+            ]
+            candidates = slow_downloads + [assigned_mirror] + external_fallbacks
+
+    for mirror in candidates:
         url = mirror.get('url', '')
         if not url or url in seen_urls:
             continue

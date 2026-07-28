@@ -205,6 +205,14 @@
                   <div class="comment">How long to wait for a slow file host to send response headers or the next chunk. This is not a total download time limit.</div>
                 </div>
                 <div class="settings-group">
+                  <label class="toggle-button">
+                    <input type="checkbox" id="setting-allow-external-mirrors" />
+                    <span class="checkmark"></span>
+                    <span>Allow supported external fallbacks</span>
+                  </label>
+                  <div class="comment">After Anna’s Archive partner routes fail, try supported external sources such as LibGen. External sites remain opt-in. Restart Stacks after changing this option.</div>
+                </div>
+                <div class="settings-group">
                   <label for="setting-incomplete-folder-path">Incomplete folder path</label>
                   <input type="text" id="setting-incomplete-folder-path" placeholder="/download/incomplete" maxlength="128" />
                   <div class="comment">Path where partial downloads are stored. Remember to add a volume mount if you change this from the default one.</div>

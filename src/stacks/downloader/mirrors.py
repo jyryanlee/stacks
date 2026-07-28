@@ -1,6 +1,35 @@
 from stacks.downloader.protection import response_looks_like_protection
 
 
+def _consume_landing_response(response, fallback_url):
+    """Read a landing page and deterministically release its connection."""
+    try:
+        response.raise_for_status()
+        return response.text, response.url or fallback_url
+    finally:
+        response.close()
+
+
+def _download_external_link(
+    d,
+    download_link,
+    source_url,
+    title,
+    resume_attempts,
+    md5,
+    subfolder,
+):
+    """Download an external file with the landing page as its Referer."""
+    return d.download_direct(
+        download_link,
+        title=title,
+        resume_attempts=resume_attempts,
+        md5=md5,
+        subfolder=subfolder,
+        request_headers={'Referer': source_url},
+    )
+
+
 def download_from_mirror(d, mirror_url, mirror_type, md5, title=None, resume_attempts=3, subfolder=None):
     """
     Download from any mirror with stale cookie handling.
@@ -47,6 +76,7 @@ def download_from_mirror(d, mirror_url, mirror_type, md5, title=None, resume_att
                     if not html_content:
                         response = d.session.get(mirror_url, timeout=30)
                         if response_looks_like_protection(response):
+                            response.close()
                             d.logger.error("Still protected after FlareSolverr solve")
                             return None
                         response.raise_for_status()
@@ -95,68 +125,80 @@ def download_from_mirror(d, mirror_url, mirror_type, md5, title=None, resume_att
             try:
                 response = d.session.get(mirror_url, timeout=30)
 
-                # Refresh cookies and retry any recognised protection response.
+                # Solve protection for this external URL directly. Pre-warming
+                # Anna's Archive cookies cannot refresh an external domain.
                 if response_looks_like_protection(response):
-                    if d.flaresolverr_url:
-                        d.logger.warning(f"Got protection response ({response.status_code}) - trying to refresh cookies")
-
-                        # Try to pre-warm new cookies
-                        if d.prewarm_cookies():
-                            d.logger.info("Retrying with fresh cookies...")
-                            # Retry once with fresh cookies
-                            response = d.session.get(mirror_url, timeout=30)
-
-                            if response_looks_like_protection(response):
-                                d.logger.warning("Still protected after cookie refresh, using FlareSolverr for full solve")
-                            else:
-                                # Success with fresh cookies, continue to parse
-                                response.raise_for_status()
-
-                                if hasattr(d, 'status_callback'):
-                                    d.status_callback("Extracting download link...")
-
-                                download_link = d.parse_download_link_from_html(response.text, md5, mirror_url)
-                                if not download_link:
-                                    d.logger.warning("Could not find download link")
-                                    return None
-
-                                if hasattr(d, 'status_callback'):
-                                    d.status_callback("Downloading file...")
-
-                                return d.download_direct(download_link, title=title, resume_attempts=resume_attempts, md5=md5, subfolder=subfolder)
-
-                        # If cookie refresh failed or protection remains, use FlareSolverr.
-                        if hasattr(d, 'status_callback'):
-                            d.status_callback("Solving CAPTCHA with FlareSolverr...")
-                        success, cookies, html_content = d.solve_with_flaresolverr(mirror_url)
-
-                        if success:
-                            if not html_content:
-                                response = d.session.get(mirror_url, timeout=30)
-                                if response_looks_like_protection(response):
-                                    d.logger.error("Still protected after FlareSolverr solve")
-                                    return None
-                                response.raise_for_status()
-                                html_content = response.text
-                            if hasattr(d, 'status_callback'):
-                                d.status_callback("Extracting download link...")
-                            download_link = d.parse_download_link_from_html(html_content, md5, mirror_url)
-                            if download_link:
-                                if hasattr(d, 'status_callback'):
-                                    d.status_callback("Downloading file...")
-                                d.logger.info("Found download URL via FlareSolverr, downloading...")
-                                return d.download_direct(download_link, title=title, resume_attempts=resume_attempts, md5=md5, subfolder=subfolder)
-                        return None
-                    else:
-                        d.logger.warning(f"Got protection response ({response.status_code}) but FlareSolverr not configured")
+                    status_code = response.status_code
+                    response.close()
+                    if not d.flaresolverr_url:
+                        d.logger.warning(
+                            f"Got protection response ({status_code}) but "
+                            "FlareSolverr not configured"
+                        )
                         return None
 
-                response.raise_for_status()
+                    d.logger.warning(
+                        f"Got protection response ({status_code}); solving "
+                        "the external URL with FlareSolverr"
+                    )
+                    if hasattr(d, 'status_callback'):
+                        d.status_callback("Solving CAPTCHA with FlareSolverr...")
+
+                    success, _, html_content = d.solve_with_flaresolverr(mirror_url)
+                    if not success:
+                        return None
+
+                    source_url = mirror_url
+                    if not html_content:
+                        response = d.session.get(mirror_url, timeout=30)
+                        if response_looks_like_protection(response):
+                            response.close()
+                            d.logger.error("Still protected after FlareSolverr solve")
+                            return None
+                        html_content, source_url = _consume_landing_response(
+                            response,
+                            mirror_url,
+                        )
+
+                    if hasattr(d, 'status_callback'):
+                        d.status_callback("Extracting download link...")
+                    download_link = d.parse_download_link_from_html(
+                        html_content,
+                        md5,
+                        source_url,
+                    )
+                    if not download_link:
+                        d.logger.warning("Could not find download link")
+                        return None
+
+                    if hasattr(d, 'status_callback'):
+                        d.status_callback("Downloading file...")
+                    d.logger.info(
+                        "Found download URL via FlareSolverr, downloading..."
+                    )
+                    return _download_external_link(
+                        d,
+                        download_link,
+                        source_url,
+                        title,
+                        resume_attempts,
+                        md5,
+                        subfolder,
+                    )
+
+                html_content, source_url = _consume_landing_response(
+                    response,
+                    mirror_url,
+                )
 
                 if hasattr(d, 'status_callback'):
                     d.status_callback("Extracting download link...")
 
-                download_link = d.parse_download_link_from_html(response.text, md5, mirror_url)
+                download_link = d.parse_download_link_from_html(
+                    html_content,
+                    md5,
+                    source_url,
+                )
                 if not download_link:
                     d.logger.warning("Could not find download link")
                     return None
@@ -164,7 +206,15 @@ def download_from_mirror(d, mirror_url, mirror_type, md5, title=None, resume_att
                 if hasattr(d, 'status_callback'):
                     d.status_callback("Downloading file...")
 
-                return d.download_direct(download_link, title=title, resume_attempts=resume_attempts, md5=md5, subfolder=subfolder)
+                return _download_external_link(
+                    d,
+                    download_link,
+                    source_url,
+                    title,
+                    resume_attempts,
+                    md5,
+                    subfolder,
+                )
 
             except Exception as e:
                 d.logger.error(f"Error accessing external mirror: {e}")

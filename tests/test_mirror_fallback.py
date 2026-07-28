@@ -70,6 +70,26 @@ class MirrorFallbackTests(unittest.TestCase):
 
         self.assertEqual(len(ordered), 2)
 
+    def test_external_assignment_still_checks_anna_routes_first(self):
+        slow = {
+            "url": "https://annas-archive.pk/slow_download/hash/0/4",
+            "type": "slow_download",
+        }
+        external = {
+            "url": (
+                "https://libgen.li/ads.php?"
+                "md5=ea3e3f6df0acfcb1b2076ffb76b41a6e"
+            ),
+            "type": "external_mirror",
+        }
+
+        ordered = _build_mirrors_to_try(
+            external,
+            [slow, external],
+        )
+
+        self.assertEqual(ordered, [slow, external])
+
     def test_reuses_assigned_lock_only_for_the_same_domain(self):
         self.assertTrue(
             _uses_assigned_domain_claim(

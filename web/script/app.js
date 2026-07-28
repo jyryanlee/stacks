@@ -509,6 +509,7 @@ function loadSettings() {
       document.getElementById("setting-retry-count").value = config.downloads?.retry_count || 3;
       document.getElementById("setting-resume-attempts").value = config.downloads?.resume_attempts || 3;
       document.getElementById("setting-download-read-timeout").value = config.downloads?.read_timeout || 300;
+      document.getElementById("setting-allow-external-mirrors").checked = !!config.downloads?.allow_external_mirrors;
       document.getElementById("setting-incomplete-folder-path").value = config.downloads?.incomplete_folder_path || "/download/incomplete";
       document.getElementById("setting-prefer-title-naming").checked = !!config.downloads?.prefer_title_naming;
       document.getElementById("setting-include-hash").value = config.downloads?.include_hash || "none";
@@ -555,6 +556,7 @@ function saveSettings() {
       retry_count: parseInt(document.getElementById("setting-retry-count").value),
       resume_attempts: parseInt(document.getElementById("setting-resume-attempts").value),
       read_timeout: parseInt(document.getElementById("setting-download-read-timeout").value) || 300,
+      allow_external_mirrors: document.getElementById("setting-allow-external-mirrors").checked,
       incomplete_folder_path: document.getElementById("setting-incomplete-folder-path").value,
       prefer_title_naming: document.getElementById("setting-prefer-title-naming").checked,
       include_hash: document.getElementById("setting-include-hash").value,
