@@ -200,6 +200,11 @@
                   <input type="number" id="setting-resume-attempts" min="1" max="10" value="3" />
                 </div>
                 <div class="settings-group">
+                  <label for="setting-download-read-timeout">Download inactivity timeout (seconds)</label>
+                  <input type="number" id="setting-download-read-timeout" min="30" max="3600" value="300" />
+                  <div class="comment">How long to wait for a slow file host to send response headers or the next chunk. This is not a total download time limit.</div>
+                </div>
+                <div class="settings-group">
                   <label for="setting-incomplete-folder-path">Incomplete folder path</label>
                   <input type="text" id="setting-incomplete-folder-path" placeholder="/download/incomplete" maxlength="128" />
                   <div class="comment">Path where partial downloads are stored. Remember to add a volume mount if you change this from the default one.</div>

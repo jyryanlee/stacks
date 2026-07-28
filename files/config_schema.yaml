@@ -45,8 +45,13 @@ downloads:
   resume_attempts:
     types: [INTEGER]
     default: 3
-    min: 0
+    min: 1
     max: 10
+  read_timeout:
+    types: [INTEGER]
+    default: 300
+    min: 30
+    max: 3600
   prefer_title_naming:
     types: [BOOL]
     default: false

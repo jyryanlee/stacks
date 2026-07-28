@@ -82,6 +82,7 @@ class DownloadWorker:
         # Get file naming config
         prefer_title_naming = self.config.get('downloads', 'prefer_title_naming', default=False)
         include_hash = self.config.get('downloads', 'include_hash', default="none")
+        download_read_timeout = self.config.get('downloads', 'read_timeout', default=300)
 
         # Get incomplete folder path from config
         incomplete_folder_path = self.config.get('downloads', 'incomplete_folder_path', default='/download/incomplete')
@@ -106,7 +107,8 @@ class DownloadWorker:
             flaresolverr_timeout=flaresolverr_timeout_ms,
             prefer_title_naming=prefer_title_naming,
             include_hash=include_hash,
-            proxy_config=proxy_config
+            proxy_config=proxy_config,
+            download_read_timeout=download_read_timeout
         )
         
         # Test fast download key if enabled and key is present

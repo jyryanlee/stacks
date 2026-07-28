@@ -17,7 +17,8 @@ class AnnaDownloader:
     def __init__(self, output_dir="./downloads", incomplete_dir=None, progress_callback=None,
                  fast_download_config=None, flaresolverr_url=None, flaresolverr_timeout=120000,
                  status_callback=None, prefer_title_naming=False, include_hash="none",
-                 proxy_config=None, allow_external_mirrors=False):
+                 proxy_config=None, allow_external_mirrors=False,
+                 download_read_timeout=300):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -83,6 +84,7 @@ class AnnaDownloader:
 
         self.flaresolverr_url = flaresolverr_url
         self.flaresolverr_timeout = flaresolverr_timeout
+        self.download_read_timeout = download_read_timeout
 
         # Filename preference configuration
         self.prefer_title_naming = prefer_title_naming

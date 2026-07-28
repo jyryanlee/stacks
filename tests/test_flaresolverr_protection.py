@@ -16,7 +16,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from stacks.downloader import cookies as cookie_cache  # noqa: E402
-from stacks.downloader.direct import _get_download_response  # noqa: E402
+from stacks.downloader.direct import (  # noqa: E402
+    _get_download_response,
+    download_direct,
+)
 from stacks.downloader.flaresolver import (  # noqa: E402
     _normalised_proxy_payload,
     solve_with_flaresolverr,
@@ -115,6 +118,215 @@ class ProtectionDetectionTests(unittest.TestCase):
         )
 
         self.assertIs(result, rejected_range)
+
+    def test_direct_download_uses_slow_host_read_timeout(self):
+        success = _response(200, "file bytes", "application/octet-stream")
+        session = Mock()
+        session.get.return_value = success
+        downloader = SimpleNamespace(
+            session=session,
+            flaresolverr_url=None,
+            download_read_timeout=420,
+        )
+
+        result = _get_download_response(
+            downloader,
+            "https://example.com/file.epub",
+        )
+
+        self.assertIs(result, success)
+        session.get.assert_called_once_with(
+            "https://example.com/file.epub",
+            headers={},
+            stream=True,
+            timeout=(30, 420),
+        )
+
+    def test_resume_restarts_when_server_ignores_range(self):
+        initial = _response(200, "unused", "application/octet-stream")
+        ignored_range = _response(200, "complete", "application/octet-stream")
+        ignored_range.close = Mock(wraps=ignored_range.close)
+        for response in (initial, ignored_range):
+            response.url = "https://example.com/book.pdf"
+
+        session = Mock()
+        session.get.side_effect = [initial, ignored_range]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            output_dir = root / "download"
+            incomplete_dir = root / "incomplete"
+            output_dir.mkdir()
+            incomplete_dir.mkdir()
+            (incomplete_dir / "book.pdf.part").write_bytes(b"old")
+
+            downloader = SimpleNamespace(
+                session=session,
+                flaresolverr_url=None,
+                download_read_timeout=300,
+                output_dir=output_dir,
+                incomplete_dir=incomplete_dir,
+                logger=Mock(),
+                progress_callback=None,
+                get_unique_filename=lambda path: path,
+            )
+
+            result = download_direct(
+                downloader,
+                "https://example.com/book.pdf",
+                title="book.pdf",
+                md5=None,
+            )
+
+            self.assertEqual(result, output_dir / "book.pdf")
+            self.assertEqual(result.read_bytes(), b"complete")
+            self.assertEqual(session.get.call_count, 2)
+            self.assertEqual(
+                session.get.call_args_list[1].kwargs["headers"],
+                {"Range": "bytes=3-"},
+            )
+            ignored_range.close.assert_called()
+
+    def test_resume_accepts_matching_content_range(self):
+        initial = _response(200, "unused", "application/octet-stream")
+        resumed = _response(206, "plete", "application/octet-stream")
+        resumed.headers["Content-Range"] = "bytes 3-7/8"
+        resumed.headers["Content-Length"] = "5"
+        for response in (initial, resumed):
+            response.url = "https://example.com/book.pdf"
+
+        session = Mock()
+        session.get.side_effect = [initial, resumed]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            output_dir = root / "download"
+            incomplete_dir = root / "incomplete"
+            output_dir.mkdir()
+            incomplete_dir.mkdir()
+            (incomplete_dir / "book.pdf.part").write_bytes(b"com")
+
+            downloader = SimpleNamespace(
+                session=session,
+                flaresolverr_url=None,
+                download_read_timeout=300,
+                output_dir=output_dir,
+                incomplete_dir=incomplete_dir,
+                logger=Mock(),
+                progress_callback=None,
+                get_unique_filename=lambda path: path,
+            )
+
+            result = download_direct(
+                downloader,
+                "https://example.com/book.pdf",
+                title="book.pdf",
+                md5=None,
+            )
+
+            self.assertEqual(result.read_bytes(), b"complete")
+            self.assertEqual(session.get.call_count, 2)
+            self.assertEqual(
+                session.get.call_args_list[1].kwargs["headers"],
+                {"Range": "bytes=3-"},
+            )
+
+    def test_resume_rejects_wrong_content_range(self):
+        initial = _response(200, "unused", "application/octet-stream")
+        wrong_range = _response(206, "junk", "application/octet-stream")
+        wrong_range.headers["Content-Range"] = "bytes 0-3/8"
+        wrong_range.close = Mock(wraps=wrong_range.close)
+        fresh = _response(200, "complete", "application/octet-stream")
+        for response in (initial, wrong_range, fresh):
+            response.url = "https://example.com/book.pdf"
+
+        session = Mock()
+        session.get.side_effect = [initial, wrong_range, fresh]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            output_dir = root / "download"
+            incomplete_dir = root / "incomplete"
+            output_dir.mkdir()
+            incomplete_dir.mkdir()
+            (incomplete_dir / "book.pdf.part").write_bytes(b"old")
+
+            downloader = SimpleNamespace(
+                session=session,
+                flaresolverr_url=None,
+                download_read_timeout=300,
+                output_dir=output_dir,
+                incomplete_dir=incomplete_dir,
+                logger=Mock(),
+                progress_callback=None,
+                get_unique_filename=lambda path: path,
+            )
+
+            result = download_direct(
+                downloader,
+                "https://example.com/book.pdf",
+                title="book.pdf",
+                md5=None,
+            )
+
+            self.assertEqual(result.read_bytes(), b"complete")
+            self.assertEqual(session.get.call_count, 3)
+            self.assertEqual(session.get.call_args_list[2].kwargs["headers"], {})
+            wrong_range.close.assert_called()
+
+    def test_read_timeout_resumes_from_written_bytes(self):
+        interrupted = _response(200, "", "application/octet-stream")
+        interrupted.url = "https://example.com/book.pdf"
+        interrupted.close = Mock(wraps=interrupted.close)
+
+        def interrupted_chunks(chunk_size):
+            yield b"com"
+            raise requests.exceptions.ReadTimeout("slow host stalled")
+
+        interrupted.iter_content = interrupted_chunks
+
+        resumed = _response(206, "plete", "application/octet-stream")
+        resumed.url = "https://example.com/book.pdf"
+        resumed.headers["Content-Range"] = "bytes 3-7/8"
+        resumed.headers["Content-Length"] = "5"
+        resumed.close = Mock(wraps=resumed.close)
+
+        session = Mock()
+        session.get.side_effect = [interrupted, resumed]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            output_dir = root / "download"
+            incomplete_dir = root / "incomplete"
+            output_dir.mkdir()
+            incomplete_dir.mkdir()
+            downloader = SimpleNamespace(
+                session=session,
+                flaresolverr_url=None,
+                download_read_timeout=300,
+                output_dir=output_dir,
+                incomplete_dir=incomplete_dir,
+                logger=Mock(),
+                progress_callback=None,
+                get_unique_filename=lambda path: path,
+            )
+
+            with patch("stacks.downloader.direct.time.sleep"):
+                result = download_direct(
+                    downloader,
+                    "https://example.com/book.pdf",
+                    title="book.pdf",
+                    md5=None,
+                )
+
+            self.assertEqual(result.read_bytes(), b"complete")
+            self.assertEqual(session.get.call_count, 2)
+            self.assertEqual(
+                session.get.call_args_list[1].kwargs["headers"],
+                {"Range": "bytes=3-"},
+            )
+            interrupted.close.assert_called()
+            resumed.close.assert_called()
 
 
 class FlareSolverrTests(unittest.TestCase):

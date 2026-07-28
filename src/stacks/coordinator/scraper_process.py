@@ -109,6 +109,7 @@ def scraper_process(config_path: Path, stop_event: Event) -> None:
                 }
 
                 allow_external_mirrors = config.get('downloads', 'allow_external_mirrors', default=False)
+                download_read_timeout = config.get('downloads', 'read_timeout', default=300)
 
                 downloader = AnnaDownloader(
                     output_dir=DOWNLOAD_PATH,
@@ -116,7 +117,8 @@ def scraper_process(config_path: Path, stop_event: Event) -> None:
                     flaresolverr_url=flaresolverr_url if flaresolverr_enabled else None,
                     flaresolverr_timeout=flaresolverr_timeout_ms,
                     proxy_config=proxy_config,
-                    allow_external_mirrors=allow_external_mirrors
+                    allow_external_mirrors=allow_external_mirrors,
+                    download_read_timeout=download_read_timeout
                 )
 
             # Fetch download links

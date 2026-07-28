@@ -18,14 +18,28 @@ GENERIC_URL_FILENAMES = {
     'slow_download',
 }
 
+DEFAULT_DOWNLOAD_CONNECT_TIMEOUT = 30
+DEFAULT_DOWNLOAD_READ_TIMEOUT = 300
+CONTENT_RANGE_PATTERN = re.compile(
+    r'^bytes\s+(\d+)-(\d+)/(\d+|\*)$',
+    re.IGNORECASE,
+)
+
 
 def _get_download_response(d, download_url, headers=None):
     """Fetch a file response, solving and retrying one protection challenge."""
+    # ``requests`` treats the second tuple value as an inactivity timeout, not
+    # a limit on the whole download. Slow-download hosts can legitimately take
+    # longer than 30 seconds to send the response headers or the next chunk.
+    request_timeout = (
+        DEFAULT_DOWNLOAD_CONNECT_TIMEOUT,
+        getattr(d, 'download_read_timeout', DEFAULT_DOWNLOAD_READ_TIMEOUT),
+    )
     response = d.session.get(
         download_url,
         headers=headers or {},
         stream=True,
-        timeout=30,
+        timeout=request_timeout,
     )
     if streamed_response_looks_like_protection(response):
         challenge_url = response.url or download_url
@@ -42,7 +56,7 @@ def _get_download_response(d, download_url, headers=None):
             download_url,
             headers=headers or {},
             stream=True,
-            timeout=30,
+            timeout=request_timeout,
         )
         if streamed_response_looks_like_protection(response):
             status_code = response.status_code
@@ -109,6 +123,29 @@ def _extract_url_filename(url):
     return candidate
 
 
+def _parse_resume_response(response, expected_offset):
+    """Validate a partial response and return its advertised total size."""
+    if response.status_code != 206:
+        return None
+
+    content_range = response.headers.get('Content-Range', '').strip()
+    match = CONTENT_RANGE_PATTERN.match(content_range)
+    if not match:
+        return None
+
+    start = int(match.group(1))
+    end = int(match.group(2))
+    total_text = match.group(3)
+    total = None if total_text == '*' else int(total_text)
+
+    if start != expected_offset or end < start:
+        return None
+    if total is not None and end >= total:
+        return None
+
+    return end, total
+
+
 def _build_paths(d, filename, subfolder=None):
     """Build final and temp paths for a resolved filename."""
     if subfolder:
@@ -173,6 +210,7 @@ def download_direct(d, download_url, title=None, total_size=None, supports_resum
 
         # Download with resume
         for attempt in range(resume_attempts):
+            response = None
             try:
                 headers = {}
                 if downloaded > 0 and supports_resume:
@@ -199,12 +237,28 @@ def download_direct(d, download_url, title=None, total_size=None, supports_resum
                     headers['Range'] = f'bytes={downloaded}-'
                     response = _get_download_response(d, download_url, headers=headers)
 
-                if downloaded > 0 and response.status_code not in [200, 206]:
-                    d.logger.warning(f"Resume not supported (status {response.status_code}), starting fresh")
-                    downloaded = 0
-                    response.close()
-                    temp_path.unlink(missing_ok=True)
-                    response = _get_download_response(d, download_url)
+                if downloaded > 0:
+                    if response.status_code == 200:
+                        # The server ignored Range and returned a complete
+                        # representation. Keep this response, but overwrite
+                        # rather than appending it to the partial file.
+                        d.logger.warning("Server ignored resume request, starting fresh")
+                        downloaded = 0
+                        temp_path.unlink(missing_ok=True)
+                    else:
+                        resume_range = _parse_resume_response(response, downloaded)
+                        if resume_range is None:
+                            d.logger.warning(
+                                f"Resume response was invalid (status {response.status_code}), starting fresh"
+                            )
+                            downloaded = 0
+                            response.close()
+                            temp_path.unlink(missing_ok=True)
+                            response = _get_download_response(d, download_url)
+                        else:
+                            _, resumed_total_size = resume_range
+                            if resumed_total_size is not None:
+                                total_size = resumed_total_size
 
                 # Get total size
                 if total_size is None:
@@ -307,6 +361,9 @@ def download_direct(d, download_url, title=None, total_size=None, supports_resum
                     time.sleep(2 ** attempt)
                     continue
                 return None
+            finally:
+                if response is not None:
+                    response.close()
         
         return None
         

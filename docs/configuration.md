@@ -22,6 +22,7 @@ downloads:
   delay: 2 # Delay in seconds
   retry_count: 3
   resume_attempts: 3
+  read_timeout: 300 # Seconds without response data before retrying (30-3600)
 
 fast_download:
   enabled: false
